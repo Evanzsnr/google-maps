@@ -2,7 +2,7 @@ import { Component, OnInit, ViewChild, ElementRef } from '@angular/core';
 import { Platform, ModalController } from '@ionic/angular';
 import { Geolocation } from '@ionic-native/geolocation/ngx';
 import { NativeGeocoder, NativeGeocoderResult, NativeGeocoderOptions } from '@ionic-native/native-geocoder/ngx';
-import { GoogleMaps, GoogleMap, GoogleMapsEvent, LatLng, MarkerOptions, Marker, Encoding, ILatLng } from "@ionic-native/google-maps";
+import { GoogleMaps, GoogleMap, GoogleMapsEvent, LatLng, MarkerOptions, Marker, Encoding, ILatLng, LatLngBounds, Polyline } from "@ionic-native/google-maps";
 
 declare var google;
 
@@ -14,6 +14,9 @@ declare var google;
 export class HomePage implements OnInit {
 
   public map: GoogleMap;
+  public path: Polyline;
+  public pickUpMarker: Marker;
+  public dropOffMarker: Marker;
   public origin: any = {};
   public destination: any = {};
   public lat: any;
@@ -38,114 +41,45 @@ export class HomePage implements OnInit {
       // Set current position.
       this.lat = resp.coords.latitude;
       this.lng = resp.coords.longitude;
-
       // Get the address.
       this.getAddress(resp.coords.latitude, resp.coords.longitude);
-
-      // Set the coordinates.
-      const coordinates: LatLng = new LatLng(this.lat, this.lng);
-
-      /* The create() function will take the ID of your map element */
-      const map = GoogleMaps.create('map');
-      map.one( GoogleMapsEvent.MAP_READY ).then((data: any) => {
-        map.setCameraTarget(coordinates);
-        map.setCameraZoom(this.zoom);
-        map.animateCamera({
-          target: coordinates,
-          zoom: 17,
-          tilt: 60,
-          bearing: 140,
-          duration: 3000
-        });
-
-        // Add a marker
-        map.addMarker({
-          position: coordinates,
-          title: this.address,
-          icon: {
-            url: 'https://i.ibb.co/QFhH4Yd/ezgif-com-gif-maker-3.png',
-            size: {
-              width: 30,
-              height: 40
-            }
-          },
-          animation: 'DROP'
-        }).then(marker => {
-          // Show the infoWindow
-          marker.showInfoWindow();
-        });
-
-      });
-    })
-    .catch((error) => {
-      console.error(error);
-    });
+      // Create the map.
+      this.createMap();
   }
-  
-  public getAddress(lat, lng){
-    let options: NativeGeocoderOptions = {
-      useLocale: true,
-      maxResults: 5
-    };
-
-    this.nativeGeocoder.reverseGeocode(lat, lng, options)
-    .then((result: NativeGeocoderResult[]) => {
-      this.address = `${result[0].thoroughfare} ${result[0].subThoroughfare}`;
-    })
-    .catch((error: any) => console.log(error));
-  }
-  
-  public startNavigating(origin, destination){
-
-    let directionsService = new google.maps.DirectionsService;
-
-    directionsService.route({
-        origin: origin,
-        destination: destination,
-        travelMode: google.maps.TravelMode['DRIVING']
-    }, (res, status) => {
-
-      if(status == google.maps.DirectionsStatus.OK){
-
-          // decode overview_polyline from direction services.
-          let decodedPoints: ILatLng[] = Encoding.decodePath(res.routes[0].overview_polyline);
-
-          let map = GoogleMaps.create("map", {
-            camera: {
-              target: decodedPoints
-            }
-          });
-
-          map.one( GoogleMapsEvent.MAP_READY ).then((data: any) => {
-            map.setCameraTarget(decodedPoints);
-            map.setCameraZoom(this.zoom);
-            map.animateCamera({
-              target: decodedPoints,
-              zoom: 17,
-              tilt: 60,
-              bearing: 140,
-              duration: 3000
-            });
-
-            map.addPolylineSync({
-                points: decodedPoints,
-                color: 'rgba(3, 183, 83, 1)',
-                width: 6, 
-                geodesic: true,
-                clickable: false,
-                zIndex: 3
-            });
-            
-          });
           
-      } else {
-          console.warn(status);
-      }
+  public createMap(){
+    // Set the coordinates.
+    const coordinates: LatLng = new LatLng(this.lat, this.lng);
 
+    /* The create() function will take the ID of your map element */
+    this.map = GoogleMaps.create('map', {
+      styles: [
+        {
+          "featureType": "poi.business",
+          "stylers": [
+            { "visibility": "off" }
+          ]
+        },
+        {
+          "featureType": "transit.station.bus",
+          "stylers":  [
+            { "visibility": "off" }
+          ]
+        }
+      ],
+      camera: {
+        target: coordinates,
+        zoom: this.zoom
+      },
+      controls: {
+        compass: false,
+        myLocationButton: true,
+        myLocation: true
+      }
     });
 
   }
-  
+    
   async openSelectionPage(){
     const modal = await this.modalCtrl.create({
       component: SelectLocationPage
@@ -154,10 +88,8 @@ export class HomePage implements OnInit {
     .then((res) => {
       if(res !== null){
         if(res.data.origin && res.data.destination){
-          
           this.origin = res.data.origin;
           this.destination = res.data.destination;
-
           // Start navigating
           this.startNavigating(this.origin, this.destination);
         }
@@ -165,6 +97,75 @@ export class HomePage implements OnInit {
     })
     .catch();
     return await modal.present();
+  }
+  
+  public startNavigating(origin, destination){
+    let directionsService = new google.maps.DirectionsService;
+    directionsService.route({
+        origin: origin,
+        destination: destination,
+        travelMode: google.maps.TravelMode['DRIVING']
+    }, (res, status) => {
+      if(status == google.maps.DirectionsStatus.OK){
+        // decode overview_polyline from direction services.
+        let decodedPoints: ILatLng[] = Encoding.decodePath(res.routes[0].overview_polyline);
+        // Draw the polyline path.
+        this.drawPolyline(decodedPoints);
+      } else {
+          console.warn(status);
+      }
+    });
+  }
+    
+  public drawPolyline(points: ILatLng[]){
+    
+    let markerOptionsPickup: MarkerOptions = {
+        position: points[0],
+        icon: {
+          url: "assets/icon/start-marker.png",
+          size: {
+            width: 25,
+            height: 35
+          }
+        },
+        title: this.origin.name,
+        zIndex: 99999999999,
+        disableAutoPan: true
+    }
+
+    let markerOptionsDropOff: MarkerOptions = {
+        position: points[points.length - 1],
+        icon: {
+          url: "assets/icon/stop-marker.png",
+          size: {
+            width: 25,
+            height: 35
+          }
+        },
+        title: this.destination.name,
+        zIndex: 99999999999,
+        disableAutoPan: true
+    }
+
+    // Add markers
+    this.pickUpMarker = this.map.addMarkerSync(markerOptionsPickup);
+    this.dropOffMarker = this.map.addMarkerSync(markerOptionsDropOff);
+
+    let latLngBounds = new LatLngBounds(points);
+    this.map.animateCamera({
+      target: latLngBounds,
+      duration: 1000
+    });
+    
+    // Add the polyline route.
+    this.path = this.map.addPolylineSync({
+      points: points,
+      color: '#3171e0',
+      width: 5, 
+      geodesic: true,
+      clickable: false,
+      zIndex: 3
+    });
   }
   
 }
