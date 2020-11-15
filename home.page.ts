@@ -41,8 +41,6 @@ export class HomePage implements OnInit {
       // Set current position.
       this.lat = resp.coords.latitude;
       this.lng = resp.coords.longitude;
-      // Get the address.
-      this.getAddress(resp.coords.latitude, resp.coords.longitude);
       // Create the map.
       this.createMap();
   }
